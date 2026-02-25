@@ -22,14 +22,13 @@ AutoUpdate=registry
 
 Network=host
 EnvironmentFile=/etc/homelab-gitops/tailscale-homeassistant.env
+# Use userspace WireGuard to avoid creating a kernel TUN device in the host
+# network namespace. Kernel TUN interfaces persist after unclean exits and
+# prevent the container from restarting (device or resource busy).
+Environment=TS_USERSPACE=true
 
 Volume=ts-homeassistant-state.volume:/var/lib/tailscale:Z
 Volume=/etc/homelab-gitops/ts-serve/homeassistant-serve.json:/config/serve.json:ro,Z
-
-# Tailscale needs tun device and NET_ADMIN
-AddDevice=/dev/net/tun:/dev/net/tun
-AddCapability=CAP_NET_ADMIN
-AddCapability=CAP_NET_RAW
 
 PodmanArgs=--memory=128m --cpus=0.25
 
