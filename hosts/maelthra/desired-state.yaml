@@ -240,4 +240,4 @@ reconciler:
   log_identifier: homelab-reconciler
   auto_reboot: false
   max_drift_minutes: 60
-  sops_version: "3.11.0"
+  sops_version: "3.12.1"
