@@ -1,0 +1,39 @@
+# homeassistant.container
+#
+# Shares the network namespace of ts-homeassistant.container (host networking),
+# which gives Home Assistant:
+#   - Direct LAN access for Meross LAN device discovery and control
+#   - Tailscale access via the sidecar (reachable at https://homeassistant.<tailnet>)
+#
+# Persistent config (DB, integrations, custom_components) lives in the
+# homeassistant-config volume. The configuration.yaml is bind-mounted read-only
+# from GitOps so trusted_proxies stays set correctly for TS serve.
+
+[Unit]
+Description=Home Assistant
+After=ts-homeassistant.service
+Requires=ts-homeassistant.service
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Container]
+ContainerName=homeassistant
+Image=ghcr.io/home-assistant/home-assistant:stable
+AutoUpdate=registry
+
+# Share network namespace with the Tailscale sidecar (host network)
+Network=ts-homeassistant.container
+
+Volume=homeassistant-config.volume:/config:Z
+# Overlay configuration.yaml with the GitOps-managed version (read-only)
+Volume=/etc/homelab-gitops/homeassistant/configuration.yaml:/config/configuration.yaml:ro,Z
+
+PodmanArgs=--memory=1g --cpus=1.5
+
+[Service]
+Restart=always
+RestartSec=15s
+TimeoutStartSec=300
+
+[Install]
+WantedBy=multi-user.target default.target

@@ -1,0 +1,10 @@
+---
+# yaml-language-server: $schema=https://raw.githubusercontent.com/aquaproj/aqua/main/json-schema/aqua-yaml.json
+# aqua tool manifest for the openclaw user.
+# Tools here are installed to ~/.local/share/aquaproj-aqua/ and bind-mounted
+# read-only into the openclaw container at /home/node/.local/share/aquaproj-aqua/.
+registries:
+  - type: standard
+    ref: v4.469.0 # renovate: depName=aquaproj/aqua-registry
+packages:
+  - name: sst/opencode@latest

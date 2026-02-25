@@ -1,0 +1,13 @@
+# Home Assistant configuration
+# Managed by GitOps — deployed to /config/configuration.yaml (read-only bind mount).
+# Edit via this repo, not the HA UI's file editor.
+
+# Required so HA correctly reads client IPs through the Tailscale serve HTTPS proxy.
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - 127.0.0.1
+    - ::1
+
+# Loads the default set of integrations (frontend, history, logbook, etc.)
+default_config:

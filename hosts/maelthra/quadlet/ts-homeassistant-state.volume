@@ -1,0 +1,3 @@
+# ts-homeassistant-state.volume — Tailscale state for homeassistant sidecar
+[Volume]
+VolumeName=ts-homeassistant-state

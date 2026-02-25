@@ -1,3 +1,0 @@
-# ollama-models.volume — Persistent storage for Ollama model files
-[Volume]
-VolumeName=ollama-models

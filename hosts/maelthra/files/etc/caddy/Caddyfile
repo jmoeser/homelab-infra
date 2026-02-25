@@ -12,11 +12,16 @@
 # to this machine's LAN IP.
 
 firefly.lan.defestri.org {
-    reverse_proxy ts-firefly:8000
+    reverse_proxy ts-firefly:8080
     tls internal
 }
 
 glow-worm.lan.defestri.org {
     reverse_proxy ts-glow-worm:8000
+    tls internal
+}
+
+hass.lan.defestri.org {
+    reverse_proxy ts-homeassistant:8123
     tls internal
 }

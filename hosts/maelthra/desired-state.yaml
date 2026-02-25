@@ -54,8 +54,8 @@ secrets:
     target: /etc/homelab-gitops/rclone.conf
     mode: "0600"
 
-  - source: tailscale-ollama.env
-    target: /etc/homelab-gitops/tailscale-ollama.env
+  - source: tailscale-homeassistant.env
+    target: /etc/homelab-gitops/tailscale-homeassistant.env
     mode: "0600"
 
   - source: openclaw.json
@@ -75,8 +75,8 @@ quadlet:
     - ts-firefly-state.volume
     - ts-glow-worm-state.volume
     - ts-openclaw-state.volume
-    - ts-ollama-state.volume
-    - ollama-models.volume
+    - ts-homeassistant-state.volume
+    - homeassistant-config.volume
     - caddy-data.volume
     - caddy-config.volume
     # Database
@@ -85,14 +85,30 @@ quadlet:
     - ts-firefly.container
     - ts-glow-worm.container
     - ts-openclaw.container
-    - ts-ollama.container
+    - ts-homeassistant.container
     # Python applications (share TS sidecar network namespace)
     - firefly.container
     - glow-worm.container
-    # Ollama LLM server (shares ts-ollama network namespace)
-    - ollama.container
+    # Home automation (shares TS sidecar network namespace; host networking for LAN access)
+    - homeassistant.container
     # LAN reverse proxy
     - caddy.container
+
+# --- User-level tool installation (uv, aqua, managed packages) ---
+# uv installs Python versions and replaces pipx (via `uv tool install`).
+# aqua manages other pinned CLIs declared in ~/aqua.yaml, which is deployed
+# via the files section below and bind-mounted read-only into the container.
+user_tools:
+  - user: openclaw
+    # Pin versions; update by checking GitHub releases:
+    #   https://github.com/astral-sh/uv/releases
+    #   https://github.com/aquaproj/aqua/releases
+    uv_version: "0.5.29"
+    uv_python_versions:
+      - "3.14"
+    uv_tools:
+      - pipx
+    aqua_version: "2.49.0"
 
 # --- User-level Podman Quadlet containers (rootless) ---
 user_quadlets:
@@ -118,6 +134,14 @@ systemd:
 
 # --- Config files (non-secret, committed in plaintext) ---
 files:
+  - source: etc/motd
+    target: /etc/motd
+    mode: "0644"
+
+  - source: etc/update-motd.d/10-homelab
+    target: /etc/update-motd.d/10-homelab
+    mode: "0755"
+
   - source: etc/caddy/Caddyfile
     target: /etc/caddy/Caddyfile
     mode: "0644"
@@ -143,8 +167,12 @@ files:
     target: /etc/homelab-gitops/ts-serve/openclaw-serve.json
     mode: "0644"
 
-  - source: etc/homelab-gitops/ts-serve/ollama-serve.json
-    target: /etc/homelab-gitops/ts-serve/ollama-serve.json
+  - source: etc/homelab-gitops/ts-serve/homeassistant-serve.json
+    target: /etc/homelab-gitops/ts-serve/homeassistant-serve.json
+    mode: "0644"
+
+  - source: etc/homelab-gitops/homeassistant/configuration.yaml
+    target: /etc/homelab-gitops/homeassistant/configuration.yaml
     mode: "0644"
 
   - source: etc/systemd/system/podman-auto-update.service.d/prune.conf
@@ -162,6 +190,11 @@ files:
     mode: "0600"
     reload_cmd: systemctl reload sshd
 
+  - source: home/openclaw/aqua.yaml
+    target: /home/openclaw/aqua.yaml
+    owner: openclaw
+    mode: "0644"
+
   - source: boot/firmware/cmdline.txt
     target: /boot/firmware/cmdline.txt
     mode: "0755"
@@ -175,6 +208,7 @@ firewall:
     - port: 443/tcp
     - port: 80/tcp
     - port: 22/tcp
+    - port: 8123/tcp # Home Assistant LAN access
     # Note: OpenClaw is now only reachable via Tailscale — no LAN port needed
   input_allow:
     # Allow Podman bridge networks to reach aardvark-dns on the host.
@@ -185,7 +219,6 @@ firewall:
   forward_allow:
     # ACCEPT rules evaluated before the REJECT rules below (order matters).
     - -s 10.89.2.0/24 -d 10.89.1.0/24 -p tcp --dport 8000 -j ACCEPT # glow-worm MCP server
-    - -s 10.89.2.0/24 -d 10.89.1.3 -p tcp --dport 11434 -j ACCEPT # ollama API
   forward_rules:
     # Prevent openclaw-network (10.89.2.0/24) from reaching local/internal networks.
     # Allows outbound internet access only. Applied to the HOMELAB-FORWARD chain.

@@ -384,6 +384,171 @@ reconcile_quadlet() {
 }
 
 # ---------------------------------------------------------------------------
+# User-level tool installation (uv, aqua, managed packages)
+# ---------------------------------------------------------------------------
+reconcile_user_tools() {
+    log "Reconciling user tools..."
+
+    local entries
+    entries=$(yaml_get_raw '.user_tools' 2>/dev/null || echo "null")
+
+    if [[ "${entries}" == "null" || -z "${entries}" ]]; then
+        log "No user_tools defined. Skipping."
+        return 0
+    fi
+
+    local arch
+    arch=$(uname -m)
+
+    echo "${entries}" | python3 -c "
+import sys, json
+data = json.loads(sys.stdin.read())
+if isinstance(data, list):
+    for item in data:
+        print(json.dumps(item))
+elif isinstance(data, dict):
+    print(json.dumps(data))
+" | while IFS= read -r entry; do
+        [[ -z "${entry}" ]] && continue
+
+        local user uid home_dir bin_dir
+        user=$(echo "${entry}" | python3 -c "import sys,json; print(json.loads(sys.stdin.read())['user'])")
+
+        if ! id "${user}" &>/dev/null; then
+            warn "User ${user} does not exist. Skipping user_tools."
+            continue
+        fi
+
+        uid=$(id -u "${user}")
+        home_dir=$(eval echo "~${user}")
+        bin_dir="${home_dir}/.local/bin"
+        mkdir -p "${bin_dir}"
+        chown "${user}:${user}" "${bin_dir}"
+
+        # --- uv ---
+        local uv_version
+        uv_version=$(echo "${entry}" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('uv_version',''))")
+
+        if [[ -n "${uv_version}" ]]; then
+            local uv_bin="${bin_dir}/uv"
+            local current_uv=""
+            [[ -x "${uv_bin}" ]] && current_uv=$(sudo -u "${user}" "${uv_bin}" --version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1 || echo "")
+
+            if [[ "${current_uv}" != "${uv_version}" ]]; then
+                log "Installing uv v${uv_version} for user ${user}..."
+                local uv_arch
+                case "${arch}" in
+                    x86_64)  uv_arch="x86_64" ;;
+                    aarch64) uv_arch="aarch64" ;;
+                    *) err "Unsupported arch for uv: ${arch}"; continue ;;
+                esac
+                local uv_url="https://github.com/astral-sh/uv/releases/download/${uv_version}/uv-${uv_arch}-unknown-linux-gnu.tar.gz"
+                local tmp_dir
+                tmp_dir=$(mktemp -d)
+                if curl -fsSL "${uv_url}" | tar -xz -C "${tmp_dir}" --strip-components=1; then
+                    install -o "${user}" -g "${user}" -m 0755 "${tmp_dir}/uv"  "${bin_dir}/uv"
+                    install -o "${user}" -g "${user}" -m 0755 "${tmp_dir}/uvx" "${bin_dir}/uvx"
+                    log "uv v${uv_version} installed for ${user}"
+                    CHANGES_MADE=1
+                else
+                    err "Failed to download uv v${uv_version}"
+                    rm -rf "${tmp_dir}"
+                    continue
+                fi
+                rm -rf "${tmp_dir}"
+            fi
+
+            # Install Python versions via uv
+            echo "${entry}" | python3 -c "
+import sys, json
+for v in json.loads(sys.stdin.read()).get('uv_python_versions', []):
+    print(v)
+" | while IFS= read -r pyver; do
+                [[ -z "${pyver}" ]] && continue
+                if ! sudo -u "${user}" HOME="${home_dir}" "${uv_bin}" python list --only-installed 2>/dev/null | grep -qE "^cpython-${pyver}"; then
+                    log "Installing Python ${pyver} via uv for ${user}..."
+                    if sudo -u "${user}" HOME="${home_dir}" "${uv_bin}" python install "${pyver}"; then
+                        log "Python ${pyver} installed."
+                        CHANGES_MADE=1
+                    else
+                        err "Failed to install Python ${pyver} via uv"
+                    fi
+                fi
+            done
+
+            # Install uv tools (pipx-style)
+            echo "${entry}" | python3 -c "
+import sys, json
+for t in json.loads(sys.stdin.read()).get('uv_tools', []):
+    print(t)
+" | while IFS= read -r tool; do
+                [[ -z "${tool}" ]] && continue
+                if ! sudo -u "${user}" HOME="${home_dir}" "${uv_bin}" tool list 2>/dev/null | grep -q "^${tool}"; then
+                    log "Installing uv tool ${tool} for ${user}..."
+                    if sudo -u "${user}" HOME="${home_dir}" "${uv_bin}" tool install "${tool}"; then
+                        log "uv tool ${tool} installed."
+                        CHANGES_MADE=1
+                    else
+                        err "Failed to install uv tool ${tool}"
+                    fi
+                fi
+            done
+        fi
+
+        # --- aqua ---
+        local aqua_version
+        aqua_version=$(echo "${entry}" | python3 -c "import sys,json; print(json.loads(sys.stdin.read()).get('aqua_version',''))")
+
+        if [[ -n "${aqua_version}" ]]; then
+            local aqua_bin="${bin_dir}/aqua"
+            local current_aqua=""
+            [[ -x "${aqua_bin}" ]] && current_aqua=$(sudo -u "${user}" "${aqua_bin}" version 2>/dev/null | grep -oP '\d+\.\d+\.\d+' | head -1 || echo "")
+
+            if [[ "${current_aqua}" != "${aqua_version}" ]]; then
+                log "Installing aqua v${aqua_version} for user ${user}..."
+                local aqua_arch
+                case "${arch}" in
+                    x86_64)  aqua_arch="amd64" ;;
+                    aarch64) aqua_arch="arm64" ;;
+                    *) err "Unsupported arch for aqua: ${arch}"; continue ;;
+                esac
+                local aqua_url="https://github.com/aquaproj/aqua/releases/download/v${aqua_version}/aqua_linux_${aqua_arch}.tar.gz"
+                local tmp_dir
+                tmp_dir=$(mktemp -d)
+                if curl -fsSL "${aqua_url}" | tar -xz -C "${tmp_dir}"; then
+                    install -o "${user}" -g "${user}" -m 0755 "${tmp_dir}/aqua" "${aqua_bin}"
+                    log "aqua v${aqua_version} installed for ${user}"
+                    CHANGES_MADE=1
+                else
+                    err "Failed to download aqua v${aqua_version}"
+                    rm -rf "${tmp_dir}"
+                    continue
+                fi
+                rm -rf "${tmp_dir}"
+            fi
+
+            # Run aqua install if aqua.yaml is present in user home
+            local aqua_config="${home_dir}/aqua.yaml"
+            if [[ -f "${aqua_config}" ]]; then
+                local aqua_root="${home_dir}/.local/share/aquaproj-aqua"
+                log "Running aqua install for ${user}..."
+                if sudo -u "${user}" \
+                    HOME="${home_dir}" \
+                    AQUA_ROOT_DIR="${aqua_root}" \
+                    AQUA_GLOBAL_CONFIG="${aqua_config}" \
+                    "${aqua_bin}" install --all 2>&1 | sed 's/^/  [aqua] /'; then
+                    log "aqua install complete for ${user}"
+                else
+                    warn "aqua install had errors for ${user}"
+                fi
+            fi
+        fi
+    done
+
+    log "User tools reconciled."
+}
+
+# ---------------------------------------------------------------------------
 # User-level Quadlet / rootless container units
 # ---------------------------------------------------------------------------
 reconcile_user_quadlets() {
@@ -820,6 +985,7 @@ main() {
     reconcile_packages
     reconcile_files
     reconcile_quadlet
+    reconcile_user_tools
     reconcile_user_quadlets
     reconcile_systemd
     reconcile_firewall

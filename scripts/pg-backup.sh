@@ -237,6 +237,53 @@ do_openclaw_backup() {
 }
 
 # ---------------------------------------------------------------------------
+# Home Assistant backup (config volume — includes DB, automations, integrations)
+# ---------------------------------------------------------------------------
+do_homeassistant_backup() {
+    local timestamp
+    timestamp=$(date -u +"%Y%m%d-%H%M%S")
+
+    local basename="homeassistant-backup-${timestamp}"
+    log "Starting backup: ${basename}"
+
+    # Export live — HA uses SQLite WAL mode so a live export is safe enough
+    # for a homelab. The critical config is in .storage/ (JSON, written atomically).
+    local dump="${BACKUP_DIR}/.tmp_${basename}.tar.gz"
+    log "  Exporting homeassistant-config volume..."
+
+    if ! podman volume export homeassistant-config \
+        | gzip -9 > "${dump}"; then
+        err "Failed to export homeassistant-config volume"
+        return 1
+    fi
+
+    local size
+    size=$(du -h "${dump}" | cut -f1)
+    log "  Export complete: ${size} compressed"
+
+    local enc="${BACKUP_DIR}/${basename}.tar.gz.age"
+    log "  Encrypting with age..."
+
+    if ! age --encrypt --recipients-file "${AGE_RECIPIENT_FILE}" \
+        --output "${enc}" "${dump}"; then
+        err "age encryption failed for homeassistant-config"
+        rm -f "${dump}"
+        return 1
+    fi
+    rm -f "${dump}"
+
+    log "  Uploading to ${RCLONE_REMOTE}:${RCLONE_BUCKET}..."
+    if ! rclone --config "${RCLONE_CONFIG}" \
+        copy "${enc}" "${RCLONE_REMOTE}:${RCLONE_BUCKET}/" \
+        --progress --transfers 1; then
+        warn "Upload failed for homeassistant-config. Local backup retained: ${enc}"
+        return 1
+    fi
+    rm -f "${enc}"
+    log "Backup '${basename}' completed successfully."
+}
+
+# ---------------------------------------------------------------------------
 # Prune old backups
 # ---------------------------------------------------------------------------
 prune_remote() {
@@ -270,6 +317,7 @@ prune_remote() {
     # Also clean up any leftover local backups
     find "${BACKUP_DIR}" -name "pg-backup-*.sql.gz.age" -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null || true
     find "${BACKUP_DIR}" -name "openclaw-backup-*.tar.gz.age" -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null || true
+    find "${BACKUP_DIR}" -name "homeassistant-backup-*.tar.gz.age" -mtime "+${RETENTION_DAYS}" -delete 2>/dev/null || true
 
     log "Pruning complete."
 }
@@ -317,6 +365,7 @@ main() {
             preflight
             do_backup
             do_openclaw_backup
+            do_homeassistant_backup
             prune_remote
             ;;
         prune)

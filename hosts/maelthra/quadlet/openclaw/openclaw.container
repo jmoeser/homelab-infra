@@ -31,10 +31,18 @@ PublishPort=127.0.0.1:18789:18789
 # Persistent storage
 Volume=openclaw-config.volume:/home/node/.openclaw:Z
 Volume=%h/workspace:/home/node/openclaw/workspace:Z,U
-Volume=%h/.config/homelab-gitops/openclaw/openclaw.json:/home/node/.openclaw/openclaw.json:ro
+
+# Host-installed tools (uv, Python 3.14, aqua, opencode) from reconciler.
+# Bind-mounted read-only so the container can execute them without modification.
+# AQUA_ROOT_DIR defaults to $HOME/.local/share/aquaproj-aqua — matches the mount.
+Volume=%h/.local:/home/node/.local:ro
+Volume=%h/aqua.yaml:/home/node/aqua.yaml:ro
 
 # Environment
 EnvironmentFile=%h/.config/homelab-gitops/openclaw.env
+Environment=PATH=/home/node/.local/share/aquaproj-aqua/bin:/home/node/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=UV_PYTHON_PREFERENCE=only-managed
+Environment=AQUA_GLOBAL_CONFIG=/home/node/aqua.yaml
 
 # Bind to all interfaces so rootless port forwarding works.
 # Default CMD binds to loopback; override to add --bind 0.0.0.0.
@@ -59,6 +67,12 @@ HealthRetries=3
 HealthStartPeriod=30s
 
 [Service]
+# Seed openclaw.json from the decrypted secret into the config volume before starting.
+# We can't bind-mount it as a file (rename() over a bind-mount fails with EBUSY),
+# so we copy it into the volume's data directory instead. mode 644 is required because
+# the container's node user maps to a sub-UID (not openclaw) and needs other-read access.
+ExecStartPre=/usr/bin/podman unshare /bin/cp %h/.config/homelab-gitops/openclaw/openclaw.json %h/.local/share/containers/storage/volumes/openclaw-config/_data/openclaw.json
+ExecStartPre=/usr/bin/podman unshare /bin/chmod 644 %h/.local/share/containers/storage/volumes/openclaw-config/_data/openclaw.json
 # Pull image before starting so slow downloads don't surprise the health check.
 # The - prefix makes this non-fatal: if the pull fails (offline, registry down)
 # Podman falls back to the cached image.

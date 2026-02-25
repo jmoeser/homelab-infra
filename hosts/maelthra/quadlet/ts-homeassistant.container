@@ -1,0 +1,41 @@
+# ts-homeassistant.container — Tailscale sidecar for Home Assistant
+#
+# Uses host networking (Network=host) so that Home Assistant (which shares
+# this network namespace via Network=ts-homeassistant.container) has direct
+# access to the LAN. This is required for the Meross LAN integration to
+# discover and communicate with Meross devices on the local network.
+#
+# Home Assistant will appear on your tailnet as "homeassistant" and is
+# accessible at https://homeassistant.<tailnet-name>.ts.net via TS serve.
+
+[Unit]
+Description=Tailscale sidecar for Home Assistant
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Container]
+ContainerName=ts-homeassistant
+Image=ghcr.io/tailscale/tailscale:latest
+AutoUpdate=registry
+
+Network=host
+EnvironmentFile=/etc/homelab-gitops/tailscale-homeassistant.env
+
+Volume=ts-homeassistant-state.volume:/var/lib/tailscale:Z
+Volume=/etc/homelab-gitops/ts-serve/homeassistant-serve.json:/config/serve.json:ro,Z
+
+# Tailscale needs tun device and NET_ADMIN
+AddDevice=/dev/net/tun:/dev/net/tun
+AddCapability=CAP_NET_ADMIN
+AddCapability=CAP_NET_RAW
+
+PodmanArgs=--memory=128m --cpus=0.25
+
+[Service]
+Restart=always
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target default.target

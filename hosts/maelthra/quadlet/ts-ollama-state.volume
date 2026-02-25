@@ -1,3 +1,0 @@
-# ts-ollama-state.volume — Tailscale state for ollama sidecar
-[Volume]
-VolumeName=ts-ollama-state
